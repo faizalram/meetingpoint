@@ -80,7 +80,7 @@ export async function solve(group: Group, progress: Progress): Promise<Solution>
   const points = people.map((p) => p.place!);
   const center = geometricMedian(points);
   const spread = Math.max(...points.map((p) => distance(center, p)));
-  const radius = Math.min(Math.max(spread * 0.7, 1500), 12_000);
+  const radius = Math.min(Math.max(spread * 0.7, 1500), 8_000);
 
   // 1. Candidate spots around the middle of the group
   const kinds = group.categories.filter((c) => c !== "mine").map((c) => CATEGORY_LABEL[c].toLowerCase());

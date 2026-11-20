@@ -93,21 +93,41 @@ function categoryOf(tags: Record<string, string>): Exclude<Category, "mine"> {
   return "restaurant";
 }
 
-export async function findSpots(
-  categories: Category[],
-  center: LatLon,
-  radius: number,
-  onRetry: (message: string) => void = () => {},
-): Promise<Spot[]> {
-  const cats = categories.filter((c): c is Exclude<Category, "mine"> => c !== "mine");
-  if (cats.length === 0) return [];
+function toSpot(el: OverpassElement): Spot | null {
+  const lat = el.lat ?? el.center?.lat;
+  const lon = el.lon ?? el.center?.lon;
+  const tags = el.tags ?? {};
+  if (lat === undefined || lon === undefined || !tags.name) return null;
+  return {
+    id: `${el.type}/${el.id}`,
+    name: tags.name,
+    lat,
+    lon,
+    category: categoryOf(tags),
+    area: tags["addr:street"] || tags["addr:suburb"] || tags["addr:city"] || undefined,
+  };
+}
+
+function dedupe(spots: Spot[]): Spot[] {
+  const seen = new Set<string>();
+  return spots.filter((s) => {
+    const key = `${s.name.toLowerCase()}|${s.lat.toFixed(3)}|${s.lon.toFixed(3)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** Main source: every matching place from OpenStreetMap, via Overpass. Throws with per-server details. */
+async function overpassSpots(cats: Exclude<Category, "mine">[], center: LatLon, radius: number, onRetry: (m: string) => void) {
   const around = `(around:${Math.round(radius)},${center.lat.toFixed(5)},${center.lon.toFixed(5)})`;
   const parts = cats.flatMap((c) => CATEGORY_QUERY[c].map((f) => `nwr${f}["name"]${around};`));
-  const query = `[out:json][timeout:20];(${parts.join("")});out center tags 2500;`;
+  const query = `[out:json][timeout:20];(${parts.join("")});out tags center qt 2500;`;
+  const notes: string[] = [];
 
-  let lastStatus = 0;
   for (const [n, url] of OVERPASS.entries()) {
-    if (n > 0) onRetry(`The spot search server is slow. Trying backup server ${n} of ${OVERPASS.length - 1}`);
+    const host = new URL(url).host;
+    if (n > 0) onRetry(`The spot search server didn't answer. Trying backup server ${n} of ${OVERPASS.length - 1}`);
     try {
       const res = await fetchWithin(
         url,
@@ -119,42 +139,93 @@ export async function findSpots(
         25_000,
         "The spot search server",
       );
-      lastStatus = res.status;
       if (!res.ok) {
-        console.warn("overpass", url, res.status);
+        notes.push(`${host} ${res.status}`);
         continue;
       }
-      const data = (await res.json()) as { elements?: OverpassElement[] };
-      const seen = new Set<string>();
-      const spots: Spot[] = [];
-      for (const el of data.elements ?? []) {
-        const lat = el.lat ?? el.center?.lat;
-        const lon = el.lon ?? el.center?.lon;
-        const tags = el.tags ?? {};
-        if (lat === undefined || lon === undefined || !tags.name) continue;
-        const key = `${tags.name.toLowerCase()}|${lat.toFixed(3)}|${lon.toFixed(3)}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        spots.push({
-          id: `${el.type}/${el.id}`,
-          name: tags.name,
-          lat,
-          lon,
-          category: categoryOf(tags),
-          area: tags["addr:street"] || tags["addr:suburb"] || tags["addr:city"] || undefined,
-        });
+      const data = (await res.json()) as { elements?: OverpassElement[]; remark?: string };
+      if (data.remark && !(data.elements ?? []).length) {
+        notes.push(`${host}: ${data.remark.slice(0, 80)}`);
+        continue;
       }
-      return spots;
+      return dedupe((data.elements ?? []).map(toSpot).filter((x): x is Spot => x !== null));
     } catch (e) {
-      console.warn("overpass failed", url, e);
-      // try the next server
+      notes.push(`${host}: ${e instanceof ServiceError ? "no answer" : (e as Error).message}`);
     }
   }
-  throw new ServiceError(
-    lastStatus === 429
-      ? "The spot search server is busy. Wait a minute and try again."
-      : "Couldn't load spots from OpenStreetMap right now. Try again in a minute.",
-  );
+  throw new ServiceError(notes.join(", "));
+}
+
+/* Backup source: Photon keyword search filtered by OpenStreetMap tag. Finds fewer places, but works when Overpass is down. */
+const PHOTON_SEARCH: Record<Exclude<Category, "mine">, { tag: string; words: string[] }[]> = {
+  cafe: [{ tag: "amenity:cafe", words: ["cafe", "kopi", "coffee"] }],
+  mall: [{ tag: "shop:mall", words: ["mall", "plaza", "square"] }],
+  restaurant: [
+    { tag: "amenity:restaurant", words: ["restoran", "rumah makan", "resto"] },
+    { tag: "amenity:fast_food", words: ["ayam", "burger"] },
+  ],
+  coworking: [
+    { tag: "amenity:coworking_space", words: ["coworking", "space"] },
+    { tag: "office:coworking", words: ["coworking"] },
+  ],
+  park: [{ tag: "leisure:park", words: ["taman", "park"] }],
+};
+
+async function photonSpots(cats: Exclude<Category, "mine">[], center: LatLon, radius: number): Promise<Spot[]> {
+  const dLat = radius / 111_320;
+  const dLon = radius / (111_320 * Math.cos((center.lat * Math.PI) / 180));
+  const bbox = [center.lon - dLon, center.lat - dLat, center.lon + dLon, center.lat + dLat].map((x) => x.toFixed(5)).join(",");
+  const out: Spot[] = [];
+  for (const cat of cats) {
+    for (const { tag, words } of PHOTON_SEARCH[cat]) {
+      for (const word of words) {
+        const q = new URLSearchParams({ q: word, osm_tag: tag, bbox, lat: String(center.lat), lon: String(center.lon), limit: "50" });
+        try {
+          const res = await fetchWithin(`${PHOTON}/api/?${q}`, {}, 10_000, "Place search");
+          if (!res.ok) continue;
+          const data = (await res.json()) as {
+            features?: { geometry: { coordinates: [number, number] }; properties: Record<string, string | number | undefined> }[];
+          };
+          for (const f of data.features ?? []) {
+            const p = f.properties;
+            if (!p.name) continue;
+            out.push({
+              id: `${String(p.osm_type ?? "x").toLowerCase()}/${p.osm_id ?? `${f.geometry.coordinates.join(",")}`}`,
+              name: String(p.name),
+              lat: f.geometry.coordinates[1],
+              lon: f.geometry.coordinates[0],
+              category: cat,
+              area: (p.street || p.district || p.city || undefined) as string | undefined,
+            });
+          }
+        } catch {
+          // keep going with the other keywords
+        }
+        await sleep(250);
+      }
+    }
+  }
+  return dedupe(out);
+}
+
+export async function findSpots(
+  categories: Category[],
+  center: LatLon,
+  radius: number,
+  onRetry: (message: string) => void = () => {},
+): Promise<Spot[]> {
+  const cats = categories.filter((c): c is Exclude<Category, "mine"> => c !== "mine");
+  if (cats.length === 0) return [];
+  try {
+    return await overpassSpots(cats, center, radius, onRetry);
+  } catch (e) {
+    const details = (e as Error).message;
+    console.warn("overpass failed:", details);
+    onRetry("The OpenStreetMap spot servers are busy. Using the backup place search");
+    const backup = await photonSpots(cats, center, radius);
+    if (backup.length > 0) return backup;
+    throw new ServiceError(`Couldn't load spots from OpenStreetMap right now. Try again in a minute. (Details: ${details})`);
+  }
 }
 
 /* ---------- Trip times and routes (Valhalla) ---------- */
