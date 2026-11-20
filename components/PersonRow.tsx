@@ -1,10 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { JAKARTA, searchPlaces, toPlace, type FoundPlace } from "@/lib/api";
+import { JAKARTA, placeFromSuggestion, searchPlaces, type Suggestion } from "@/lib/api";
 import { MODE_LABEL, type Mode, type Person, type Place } from "@/lib/types";
 
 const MODES: Mode[] = ["car", "motorbike", "walk"];
+
+const newSession = () =>
+  typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now();
 
 type Props = {
   person: Person;
@@ -20,9 +23,11 @@ type Props = {
 export default function PersonRow({ person, color, isFirst, picking, canRemove, onChange, onPickOnMap, onRemove }: Props) {
   const [editing, setEditing] = useState(!person.place);
   const [query, setQuery] = useState("");
-  const [options, setOptions] = useState<FoundPlace[]>([]);
+  const [options, setOptions] = useState<Suggestion[]>([]);
   const [status, setStatus] = useState("");
   const abort = useRef<AbortController | null>(null);
+  // One Google autocomplete session per search: typing is free when it ends with picking a place
+  const session = useRef(newSession());
 
   useEffect(() => {
     if (person.place) setEditing(false);
@@ -39,13 +44,13 @@ export default function PersonRow({ person, color, isFirst, picking, canRemove, 
       abort.current = new AbortController();
       try {
         setStatus("Searching");
-        const found = await searchPlaces(q, person.place ?? JAKARTA, abort.current.signal);
+        const found = await searchPlaces(q, session.current, person.place ?? JAKARTA, abort.current.signal);
         setOptions(found);
         setStatus(found.length ? "" : "No matches. Try another name, or pick on the map.");
       } catch (e) {
         if ((e as Error).name !== "AbortError") setStatus((e as Error).message);
       }
-    }, 450);
+    }, 350);
     return () => clearTimeout(t);
   }, [query, person.place]);
 
@@ -55,10 +60,16 @@ export default function PersonRow({ person, color, isFirst, picking, canRemove, 
     setOptions([]);
     setStatus("");
     setEditing(false);
+    session.current = newSession();
   }
 
-  function choose(p: FoundPlace) {
-    setPlace(toPlace(p));
+  async function choose(s: Suggestion) {
+    setStatus("Getting location");
+    try {
+      setPlace(await placeFromSuggestion(s, session.current));
+    } catch (e) {
+      setStatus((e as Error).message);
+    }
   }
 
   function useMyLocation() {
@@ -138,8 +149,8 @@ export default function PersonRow({ person, color, isFirst, picking, canRemove, 
           </div>
           {options.length > 0 && (
             <ul className="options">
-              {options.map((o, i) => (
-                <li key={`${o.lat},${o.lon},${i}`}>
+              {options.map((o) => (
+                <li key={o.placeId}>
                   <button type="button" onClick={() => choose(o)}>
                     <span className="opt-main">{o.main}</span>
                     {o.secondary && <span className="opt-sub">{o.secondary}</span>}
@@ -149,6 +160,7 @@ export default function PersonRow({ person, color, isFirst, picking, canRemove, 
             </ul>
           )}
           {status && <p className="hint">{status}</p>}
+          <p className="powered">Search by Google</p>
         </div>
       )}
     </li>

@@ -10,7 +10,7 @@ export class HttpError extends Error {
 export function route(fn: (req: Request) => Promise<Response>) {
   return async (req: Request): Promise<Response> => {
     try {
-      // Browsers label cross-site calls; this keeps other sites from spending your daily TomTom requests
+      // Browsers label cross-site calls; this keeps other sites from spending your Google quota
       const site = req.headers.get("sec-fetch-site");
       if (site && site !== "same-origin" && site !== "none") throw new HttpError(403, "Not allowed.");
       return await fn(req);

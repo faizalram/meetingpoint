@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { Map as MLMap, Marker as MLMarker, GeoJSONSource, StyleSpecification } from "maplibre-gl";
 import { JAKARTA } from "@/lib/api";
 import type { Place, Result, Spot } from "@/lib/types";
 
@@ -20,24 +19,27 @@ type Props = {
   fitKey: string;
 };
 
-/**
- * TomTom raster tiles (50,000 free a day), drawn with MapLibre. Night style in dark mode.
- * Tiles come through this app's /api/tile route, so the TomTom map key stays on the server.
- */
-function tomtomStyle(dark: boolean): StyleSpecification {
-  return {
-    version: 8,
-    sources: {
-      tomtom: {
-        type: "raster",
-        tiles: [`${window.location.origin}/api/tile/${dark ? "night" : "main"}/{z}/{x}/{y}`],
-        tileSize: 256,
-        maxzoom: 22,
-        attribution: "© TomTom",
-      },
-    },
-    layers: [{ id: "tomtom", type: "raster", source: "tomtom" }],
-  };
+let loading: Promise<void> | null = null;
+
+/** Loads the Maps JavaScript API once, with the marker library. */
+function loadGoogleMaps(key: string): Promise<void> {
+  if (typeof window !== "undefined" && window.google?.maps?.Map) return Promise.resolve();
+  if (!loading) {
+    loading = new Promise((resolve, reject) => {
+      const w = window as unknown as Record<string, unknown>;
+      w.__meetingPointMapsReady = () => resolve();
+      const s = document.createElement("script");
+      const q = new URLSearchParams({ key, v: "weekly", libraries: "marker", loading: "async", callback: "__meetingPointMapsReady" });
+      s.src = `https://maps.googleapis.com/maps/api/js?${q}`;
+      s.async = true;
+      s.onerror = () => {
+        loading = null;
+        reject(new Error("Google Maps couldn't load."));
+      };
+      document.head.appendChild(s);
+    });
+  }
+  return loading;
 }
 
 function initials(name: string) {
@@ -45,103 +47,95 @@ function initials(name: string) {
   return ((parts[0]?.[0] ?? "?") + (parts[1]?.[0] ?? "")).toUpperCase();
 }
 
-const empty = { type: "FeatureCollection" as const, features: [] };
-
 export default function MapView(props: Props) {
   const box = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<MLMap | null>(null);
-  const libRef = useRef<typeof import("maplibre-gl") | null>(null);
-  const markers = useRef<MLMarker[]>([]);
-  const ready = useRef(false);
+  const mapRef = useRef<google.maps.Map | null>(null);
+  const markers = useRef<google.maps.marker.AdvancedMarkerElement[]>([]);
+  const lines = useRef<google.maps.Polyline[]>([]);
   const latest = useRef(props);
   latest.current = props;
-  const [problem, setProblem] = useState("");
+  const [failed, setFailed] = useState("");
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const lib = await import("maplibre-gl");
-      if (cancelled || !box.current) return;
-      lib.setWorkerUrl(new URL("/maplibre-gl-worker.mjs", window.location.href).href);
-      libRef.current = lib;
-      const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-      const map = new lib.Map({
-        container: box.current,
-        style: tomtomStyle(dark),
-        center: [JAKARTA.lon, JAKARTA.lat],
-        zoom: 10.3,
-        attributionControl: { compact: true },
-      });
-      map.addControl(new lib.NavigationControl({ showCompass: false }), "top-right");
-      map.on("click", (e) => latest.current.onPick?.(e.lngLat.lat, e.lngLat.lng));
-      map.on("error", (e) => {
-        const status = (e.error as { status?: number } | undefined)?.status;
-        if (status === 500) setProblem("The map needs TOMTOM_MAP_KEY in Vercel. Add it, then redeploy.");
-        else if (status === 403) setProblem("TomTom refused the map tiles: enable Map Display API on TOMTOM_MAP_KEY, or today's free tiles are used up.");
-      });
-      map.on("load", () => {
-        map.addSource("routes", { type: "geojson", data: empty });
-        map.addLayer({
-          id: "routes-casing",
-          type: "line",
-          source: "routes",
-          layout: { "line-join": "round", "line-cap": "round" },
-          paint: { "line-color": "#ffffff", "line-width": 7, "line-opacity": 0.9 },
+      // The browser key comes from the server at runtime (GOOGLE_MAPS_BROWSER_KEY), not from the build
+      const cfg = (await fetch("/api/config", { cache: "no-store" })
+        .then((r) => r.json())
+        .catch(() => null)) as { mapsKey?: string; mapId?: string } | null;
+      if (!cfg?.mapsKey) throw new Error("no key");
+      await loadGoogleMaps(cfg.mapsKey);
+      return cfg.mapId || "DEMO_MAP_ID";
+    })()
+      .then((mapId) => {
+        if (cancelled || !box.current) return;
+        const map = new google.maps.Map(box.current, {
+          center: { lat: JAKARTA.lat, lng: JAKARTA.lon },
+          zoom: 11,
+          mapId,
+          disableDefaultUI: true,
+          zoomControl: true,
+          clickableIcons: false,
+          gestureHandling: "greedy",
+          colorScheme: "FOLLOW_SYSTEM",
+        } as google.maps.MapOptions);
+        map.addListener("click", (e: google.maps.MapMouseEvent) => {
+          if (e.latLng) latest.current.onPick?.(e.latLng.lat(), e.latLng.lng());
         });
-        map.addLayer({
-          id: "routes",
-          type: "line",
-          source: "routes",
-          layout: { "line-join": "round", "line-cap": "round" },
-          paint: { "line-color": ["get", "color"], "line-width": 4 },
-        });
-        map.addSource("checked", { type: "geojson", data: empty });
-        map.addLayer({
-          id: "checked",
-          type: "circle",
-          source: "checked",
-          paint: {
-            "circle-radius": 3.5,
-            "circle-color": "#7c8796",
-            "circle-opacity": 0.8,
-            "circle-stroke-width": 1,
-            "circle-stroke-color": "#ffffff",
-          },
-        });
-        ready.current = true;
+        mapRef.current = map;
         draw();
         fit();
-      });
-      mapRef.current = map;
-    })();
+      })
+      .catch((e: Error) =>
+        setFailed(
+          e.message === "no key"
+            ? "Add GOOGLE_MAPS_BROWSER_KEY in Vercel, then redeploy, to show the map."
+            : "Google Maps couldn't load. Check the browser key and its allowed websites in Google Cloud.",
+        ),
+      );
     return () => {
       cancelled = true;
-      mapRef.current?.remove();
-      mapRef.current = null;
-      ready.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  function addMarker(position: google.maps.LatLngLiteral, content: HTMLElement, title: string, zIndex: number) {
+    const m = new google.maps.marker.AdvancedMarkerElement({ map: mapRef.current, position, content, title, zIndex });
+    markers.current.push(m);
+    return m;
+  }
+
   function draw() {
     const map = mapRef.current;
-    const lib = libRef.current;
-    if (!map || !lib || !ready.current) return;
+    if (!map) return;
     const p = latest.current;
 
-    markers.current.forEach((m) => m.remove());
+    markers.current.forEach((m) => (m.map = null));
     markers.current = [];
+    lines.current.forEach((l) => l.setMap(null));
+    lines.current = [];
+
+    for (const r of p.routes) {
+      const path = r.path.map(([lat, lng]) => ({ lat, lng }));
+      lines.current.push(new google.maps.Polyline({ map, path, strokeColor: "#ffffff", strokeWeight: 7, strokeOpacity: 0.9, zIndex: 1 }));
+      lines.current.push(new google.maps.Polyline({ map, path, strokeColor: r.color, strokeWeight: 4, strokeOpacity: 1, zIndex: 2 }));
+    }
+
+    for (const s of p.checked) {
+      if (p.results.some((r) => r.spot.id === s.id)) continue;
+      const el = document.createElement("div");
+      el.className = "mk-dot";
+      addMarker({ lat: s.lat, lng: s.lon }, el, s.name, 1);
+    }
 
     for (const s of p.mySpots) {
       const el = document.createElement("div");
       el.className = "mk-own";
-      el.title = s.name;
-      markers.current.push(new lib.Marker({ element: el }).setLngLat([s.lon, s.lat]).addTo(map));
+      addMarker({ lat: s.lat, lng: s.lon }, el, s.name, 2);
     }
 
     p.results.forEach((r, i) => {
-      const el = document.createElement("button");
-      el.type = "button";
+      const el = document.createElement("div");
       el.className = `mk-spot${p.selected === i ? " is-selected" : ""}`;
       const sign = document.createElement("span");
       sign.className = "mk-sign";
@@ -149,13 +143,9 @@ export default function MapView(props: Props) {
       num.textContent = String(i + 1);
       sign.appendChild(num);
       el.appendChild(sign);
-      el.title = r.spot.name;
-      el.setAttribute("aria-label", `Option ${i + 1}: ${r.spot.name}`);
-      el.addEventListener("click", (e) => {
-        e.stopPropagation();
-        latest.current.onSelect(i);
-      });
-      markers.current.push(new lib.Marker({ element: el }).setLngLat([r.spot.lon, r.spot.lat]).addTo(map));
+      const m = addMarker({ lat: r.spot.lat, lng: r.spot.lon }, el, `Option ${i + 1}: ${r.spot.name}`, p.selected === i ? 30 : 20);
+      m.gmpClickable = true;
+      m.addListener("click", () => latest.current.onSelect(i));
     });
 
     for (const person of p.people) {
@@ -164,56 +154,36 @@ export default function MapView(props: Props) {
       el.className = "mk-person";
       el.style.background = person.color;
       el.textContent = initials(person.name);
-      el.title = `${person.name}: ${person.place.label}`;
-      markers.current.push(new lib.Marker({ element: el }).setLngLat([person.place.lon, person.place.lat]).addTo(map));
+      addMarker({ lat: person.place.lat, lng: person.place.lon }, el, `${person.name}: ${person.place.label}`, 40);
     }
-
-    (map.getSource("checked") as GeoJSONSource | undefined)?.setData({
-      type: "FeatureCollection",
-      features: p.checked
-        .filter((s) => !p.results.some((r) => r.spot.id === s.id))
-        .map((s) => ({ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: [s.lon, s.lat] } })),
-    });
-    (map.getSource("routes") as GeoJSONSource | undefined)?.setData({
-      type: "FeatureCollection",
-      features: p.routes.map((r) => ({
-        type: "Feature",
-        properties: { color: r.color },
-        geometry: { type: "LineString", coordinates: r.path.map(([lat, lon]) => [lon, lat]) },
-      })),
-    });
   }
 
   function fit() {
     const map = mapRef.current;
-    const lib = libRef.current;
-    if (!map || !lib || !ready.current) return;
+    if (!map) return;
     const p = latest.current;
-    const pts: [number, number][] = [
-      ...p.people.filter((x) => x.place).map((x) => [x.place!.lon, x.place!.lat] as [number, number]),
-      ...p.results.map((r) => [r.spot.lon, r.spot.lat] as [number, number]),
+    const pts = [
+      ...p.people.filter((x) => x.place).map((x) => ({ lat: x.place!.lat, lng: x.place!.lon })),
+      ...p.results.map((r) => ({ lat: r.spot.lat, lng: r.spot.lon })),
     ];
     if (pts.length === 0) return;
     if (pts.length === 1) {
-      map.easeTo({ center: pts[0], zoom: 13 });
+      map.panTo(pts[0]);
+      map.setZoom(14);
       return;
     }
-    const bounds = new lib.LngLatBounds(pts[0], pts[0]);
+    const bounds = new google.maps.LatLngBounds();
     pts.forEach((pt) => bounds.extend(pt));
-    map.fitBounds(bounds, { padding: 56, maxZoom: 15, duration: 600 });
+    map.fitBounds(bounds, 56);
   }
 
   useEffect(draw, [props.people, props.mySpots, props.checked, props.results, props.selected, props.routes]);
   useEffect(fit, [props.fitKey]);
 
-  useEffect(() => {
-    mapRef.current?.getCanvas().style.setProperty("cursor", props.onPick ? "crosshair" : "");
-  }, [props.onPick]);
-
   return (
     <div className="map" role="region" aria-label="Map">
       <div ref={box} className="map-canvas" />
-      {problem && <p className="map-error">{problem}</p>}
+      {failed && <p className="map-error">{failed}</p>}
     </div>
   );
 }

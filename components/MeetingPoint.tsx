@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { routeLines } from "@/lib/api";
+import { routeLine, sleep } from "@/lib/api";
 import { evaluate, solve, type Solution } from "@/lib/solver";
 import { load, newGroup, newId, newPerson, save } from "@/lib/store";
 import {
@@ -118,22 +118,17 @@ function Planner({ saved, setSaved }: { saved: Saved; setSaved: (fn: (s: Saved) 
       setRoutes([]);
       const target = list[i]?.spot;
       if (!target) return;
-      try {
-        // One request for everyone's route to this spot
-        const paths = await routeLines(
-          sol.people.map((p) => ({ from: p.place!, mode: p.mode })),
-          target,
-          sol.departure,
-        );
+      const drawn: MapRoute[] = [];
+      for (const person of sol.people) {
         if (token !== routeToken.current) return;
-        setRoutes(
-          sol.people.flatMap((p, k) => {
-            const path = paths[k];
-            return path ? [{ color: colorOf(p.id), path }] : [];
-          }),
-        );
-      } catch {
-        // routes are a bonus; the trip times on the card still stand
+        try {
+          const r = await routeLine(person.place!, target, person.mode, sol.departure);
+          drawn.push({ color: colorOf(person.id), path: r.path });
+          if (token === routeToken.current) setRoutes([...drawn]);
+        } catch {
+          // skip this route; the times on the card still stand
+        }
+        await sleep(150);
       }
     },
     [colorOf],
@@ -374,8 +369,8 @@ function Planner({ saved, setSaved }: { saved: Saved; setSaved: (fn: (s: Saved) 
           )}
           <p className="hint">
             {group.leaveAt
-              ? "Uses TomTom's typical traffic for that time (today, or tomorrow if it has passed)."
-              : "Uses TomTom's live traffic for car and motorbike trips."}
+              ? "Uses Google's predicted traffic for that time (today, or tomorrow if it has passed)."
+              : "Uses Google's live traffic for car and motorbike trips."}
           </p>
         </section>
 
@@ -439,8 +434,8 @@ function Planner({ saved, setSaved }: { saved: Saved; setSaved: (fn: (s: Saved) 
         )}
 
         <footer className="foot">
-          Places, trip times and routes come from TomTom, with live or typical traffic. Motorbike routing is a TomTom beta.
-          Groups are saved only in this browser.
+          Places, trip times and routes come from Google Maps, with live or predicted traffic. Groups are saved only in
+          this browser.
         </footer>
       </div>
 

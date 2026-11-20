@@ -16,7 +16,7 @@ export type Solution = {
   departure: string | null;
 };
 
-// Kept small on purpose: every person x spot pair is one TomTom route request (2,500 free a day).
+// Kept small on purpose: Google bills trip times per person x spot.
 const PASS1_SPOTS = 16;
 const PASS2_PER_AREA = 4;
 
@@ -85,7 +85,7 @@ export async function solve(group: Group, progress: Progress): Promise<Solution>
   const spread = Math.max(...points.map((p) => distance(center, p)));
   const radius = Math.min(Math.max(spread * 0.7, 1500), 10_000);
 
-  // 1. Candidate spots around the middle of the group (TomTom Search)
+  // 1. Candidate spots around the middle of the group (Google Places)
   const kinds = group.categories.filter((c) => c !== "mine").map((c) => CATEGORY_LABEL[c].toLowerCase());
   progress(kinds.length ? `Finding ${kinds.join(", ")} spots near the middle of the group` : "Using your saved spots");
   const own = (group.categories.includes("mine") ? group.mySpots : []).filter(okCoord);

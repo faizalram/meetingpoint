@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
-import "maplibre-gl/dist/maplibre-gl.css";
 import "./globals.css";
 
 // Barlow (SIL Open Font License): a grotesk drawn from road signs and licence plates

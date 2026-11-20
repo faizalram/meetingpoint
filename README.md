@@ -1,56 +1,64 @@
 # MeetingPoint
 
-Find a fair place to meet when everyone starts from a different part of Jakarta. Each person picks how they travel (car, motorbike, walking). The app finds real places of the kind you choose (cafe, mall, restaurant, coworking, park, or your own spots) and compares everyone's trip times with TomTom's live traffic.
+Find a fair place to meet when everyone starts from a different part of Jakarta. Each person picks how they travel (car, motorbike, walking). The app finds real places of the kind you choose (cafe, mall, restaurant, coworking, park, or your own spots) and compares everyone's trip times with Google's live or predicted traffic.
 
 ## How it works
 
-1. Enter where each person starts (TomTom place search, pick on the map, or your location) and how they travel.
-2. The app finds the middle of the group and asks TomTom for matching spots around it (7 searches spread over the area).
-3. It gets everyone's trip time to 16 well spread spots in one TomTom Batch Routing request per travel mode: car and motorbike with live traffic, walking.
+1. Enter where each person starts (Google place search, pick on the map, or your location) and how they travel.
+2. The app finds the middle of the group and asks Google Places for matching spots around it (7 searches spread over the area).
+3. It gets everyone's trip time to 16 well spread spots with one Google Routes "route matrix" call per travel mode: car with live traffic, motorbike with Google's two-wheeler routing, walking.
 4. **Fair for everyone** keeps the longest trip as short as possible; **Fastest overall** keeps the trips added together as short as possible.
 5. It checks 4 more spots around each of the 3 best areas, then shows the top 3 with everyone's time and route.
 
-Motorbike uses TomTom's `motorcycle` travel mode, which TomTom marks as beta: restriction data isn't complete everywhere. Coworking spaces are found by keyword, since TomTom has no coworking category.
+Switching Fair / Fastest re-ranks instantly. Changing people, travel modes, spot types or the departure time needs a new search.
 
-## TomTom setup (free, no credit card)
+## Google Cloud setup (once)
 
-1. Sign up at my.tomtom.com (or developer.tomtom.com > Sign up).
-2. Keys > API & SDK Keys > Create Key, twice:
-   - `meetingpoint-server` with **Search API** and **Routing API** (Batch Routing is part of Routing)
-   - `meetingpoint-map` with **Map Display API**
-3. Copy both keys. Don't set allowed domains: both are only used by this app's server.
-
-The free plan gives 2,500 non-tile requests and 50,000 map tiles a day. Without prepaid credit, requests past the daily amount are blocked, not billed, so the app can't cost you money.
+1. Go to console.cloud.google.com, create a project called `meetingpoint`, and link a billing account (a card is required; usage within Google's free monthly amounts costs nothing).
+2. APIs & Services > Library: enable **Maps JavaScript API**, **Places API (New)** and **Routes API**.
+3. APIs & Services > Credentials > Create credentials > API key, twice:
+   - **Server key**: API restrictions = Places API (New) + Routes API. No application restriction (Vercel's servers have changing addresses). This one is secret.
+   - **Browser key**: Application restrictions = Websites, add `https://YOUR-PROJECT.vercel.app/*`. API restrictions = Maps JavaScript API.
+4. Optional: Google Maps Platform > Map Management > Create Map ID (JavaScript, Vector). Without it the app uses Google's `DEMO_MAP_ID`, which is fine for personal use.
+5. Recommended: Billing > Budgets & alerts, set a small monthly budget (e.g. USD 5) with email alerts. You can also lower daily quotas for Routes API and Places API (New) under APIs & Services > (API) > Quotas.
 
 ## Vercel environment variables
 
 | Name | Value |
 |---|---|
-| `TOMTOM_API_KEY` | Server key |
-| `TOMTOM_MAP_KEY` | Map key |
+| `GOOGLE_MAPS_API_KEY` | Server key |
+| `GOOGLE_MAPS_BROWSER_KEY` | Browser key |
+| `GOOGLE_MAP_ID` | Map ID (optional) |
 
-Redeploy after adding them. Both keys stay on the server: place search, trip times and routes use `TOMTOM_API_KEY`, and map tiles go through the app's `/api/tile` route with `TOMTOM_MAP_KEY`, so the browser never sees either key.
+Redeploy after adding or changing them. The server key never leaves the server. The browser key is handed to the page at runtime by `/api/config`, because Google's map script must load with it; that's why it's restricted to your website.
 
-## Daily usage
+## What it uses per search (3 people, one spot type)
 
-One search for 3 people and one kind of place uses about 7 spot searches, about 84 route calculations (28 spots × 3 people) and 3 route lines, so roughly 100 requests. That's about 25 searches a day on the free plan. Map tiles are counted separately (50,000 a day), and tiles you've already seen are served from the browser and Vercel's cache for a day.
+- Places Nearby Search: 7 calls
+- Route matrix: about 28 spots × each person, split by travel mode (car = Pro with traffic, motorbike = Enterprise, walking = Essentials)
+- Routes for the option you view: 1 call per person
+- Start point search: typing is free within a session; picking a place is 1 Place Details (Essentials) call
 
-If the daily amount runs out, the app says so; it resets the next day.
+Google gives free monthly amounts per SKU (10,000 Essentials, 5,000 Pro, 1,000 Enterprise). For a small group that's roughly 30 to 90 free searches a month, depending on how many people go by motorbike (the Enterprise bucket is smallest). Past that, a search costs on the order of USD 1, mostly trip times. The budget alert above tells you before that happens.
 
 ## Privacy and data
 
 - Groups and saved spots stay in your browser (local storage).
-- Place searches, trip times, routes and map tiles go through this app's own server routes, so neither TomTom key reaches the browser. The routes only accept requests from the app's own pages.
+- API calls for places and trips go through this app's own server routes, so the server key is never sent to the browser. The routes only accept requests from the app's own pages.
 
 ## Local development
 
 ```bash
 npm install
-cp .env.example .env.local   # fill in both keys
+cp .env.example .env.local   # fill in the keys
 npm run dev
 ```
 
-`npm install` also copies MapLibre's worker file into `public/` (see `scripts/copy-worker.mjs`); Vercel does the same on every build.
+Add `http://localhost:3000/*` to the browser key's allowed websites to see the map locally.
+
+## Closed places
+
+Spot search asks Google for each place's business status and skips places Google marks as temporarily or permanently closed.
 
 ## Fonts
 

@@ -369,6 +369,12 @@ button {
   font-size: 0.875rem;
 }
 
+.powered {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
 .time {
   margin-top: 0.5rem;
   padding: 0.5rem 0.7rem;

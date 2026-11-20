@@ -1,4 +1,4 @@
-// Browser-side calls to this app's own API routes, which talk to TomTom with the server key.
+// Browser-side calls to this app's own API routes, which talk to Google with the server key.
 
 import type { LatLon } from "./geo";
 import type { Category, Mode, Place, Spot } from "./types";
@@ -16,7 +16,7 @@ async function post<T>(path: string, body: unknown, signal?: AbortSignal): Promi
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
-      signal: signal ?? AbortSignal.timeout(65_000),
+      signal: signal ?? AbortSignal.timeout(45_000),
     });
   } catch (e) {
     const name = (e as Error).name;
@@ -29,15 +29,16 @@ async function post<T>(path: string, body: unknown, signal?: AbortSignal): Promi
   return data;
 }
 
-export type FoundPlace = { lat: number; lon: number; main: string; secondary: string };
+export type Suggestion = { placeId: string; main: string; secondary: string };
 
-export async function searchPlaces(q: string, near: LatLon, signal?: AbortSignal): Promise<FoundPlace[]> {
-  const r = await post<{ places: FoundPlace[] }>("/api/search", { q, near: { lat: near.lat, lon: near.lon } }, signal);
-  return r.places;
+export async function searchPlaces(input: string, sessionToken: string, near: LatLon, signal?: AbortSignal): Promise<Suggestion[]> {
+  const r = await post<{ suggestions: Suggestion[] }>("/api/autocomplete", { input, sessionToken, near }, signal);
+  return r.suggestions;
 }
 
-export function toPlace(p: FoundPlace): Place {
-  return { lat: p.lat, lon: p.lon, label: [p.main, p.secondary.split(",")[0]].filter(Boolean).join(", ") };
+export async function placeFromSuggestion(s: Suggestion, sessionToken: string): Promise<Place> {
+  const r = await post<{ lat: number; lon: number; address: string }>("/api/place", { placeId: s.placeId, sessionToken });
+  return { lat: r.lat, lon: r.lon, label: [s.main, s.secondary.split(",")[0]].filter(Boolean).join(", ") };
 }
 
 export async function findSpots(categories: Category[], center: LatLon, radius: number): Promise<Spot[]> {
@@ -58,18 +59,8 @@ export async function tripMatrix(origins: LatLon[], destinations: LatLon[], mode
   return r.seconds;
 }
 
-export async function routeLines(
-  legs: { from: LatLon; mode: Mode }[],
-  to: LatLon,
-  departure: string | null,
-): Promise<([number, number][] | null)[]> {
-  const pick = (p: LatLon) => ({ lat: p.lat, lon: p.lon });
-  const r = await post<{ paths: ([number, number][] | null)[] }>("/api/routes", {
-    legs: legs.map((l) => ({ from: pick(l.from), mode: l.mode })),
-    to: pick(to),
-    departure,
-  });
-  return r.paths;
+export async function routeLine(from: LatLon, to: LatLon, mode: Mode, departure: string | null): Promise<{ path: [number, number][] }> {
+  return post("/api/route", { from: { lat: from.lat, lon: from.lon }, to: { lat: to.lat, lon: to.lon }, mode, departure });
 }
 
 /** "18:30" -> next time it's 18:30 here, as ISO. null means leave now. */

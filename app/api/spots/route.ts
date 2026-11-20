@@ -1,4 +1,4 @@
-import { findSpots, type SpotCategory } from "@/lib/server/tomtom";
+import { findSpots, type SpotCategory } from "@/lib/server/google";
 import { asPoint, HttpError, route } from "@/lib/server/http";
 
 const ALLOWED: SpotCategory[] = ["cafe", "mall", "restaurant", "coworking", "park"];
