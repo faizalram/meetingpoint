@@ -69,6 +69,15 @@ function Planner({ saved, setSaved }: { saved: Saved; setSaved: (fn: (s: Saved) 
   const [routes, setRoutes] = useState<MapRoute[]>([]);
   const [picking, setPicking] = useState<Picking>(null);
   const [notice, setNotice] = useState("");
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    if (!busy) return;
+    const started = Date.now();
+    setElapsed(0);
+    const t = setInterval(() => setElapsed(Math.round((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(t);
+  }, [busy]);
   const routeToken = useRef(0);
   const resultsRef = useRef<HTMLElement>(null);
 
@@ -355,7 +364,7 @@ function Planner({ saved, setSaved }: { saved: Saved; setSaved: (fn: (s: Saved) 
           {!busy && located < 2 && <p className="hint">Set where at least 2 people start.</p>}
           {busy && (
             <p className="progress" aria-live="polite">
-              {progress}
+              {progress || "Starting"} <span className="nowrap">({elapsed} s)</span>
             </p>
           )}
           {error && <p className="error">{error}</p>}

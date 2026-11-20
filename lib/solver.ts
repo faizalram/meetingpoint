@@ -86,7 +86,7 @@ export async function solve(group: Group, progress: Progress): Promise<Solution>
   const kinds = group.categories.filter((c) => c !== "mine").map((c) => CATEGORY_LABEL[c].toLowerCase());
   progress(kinds.length ? `Finding ${kinds.join(", ")} spots near the middle of the group` : "Using your saved spots");
   const own = group.categories.includes("mine") ? group.mySpots : [];
-  const found = await findSpots(group.categories, center, radius);
+  const found = await findSpots(group.categories, center, radius, progress);
   const all = [...own, ...found];
   if (all.length === 0) {
     throw new ServiceError("No matching places found near the middle of the group. Try another kind of place, or add your own spot.");

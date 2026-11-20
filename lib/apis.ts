@@ -18,6 +18,18 @@ export class ServiceError extends Error {}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** fetch with a time limit, so a slow free server can never leave the app stuck. */
+async function fetchWithin(url: string, init: RequestInit, ms: number, what: string): Promise<Response> {
+  try {
+    return await fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(ms) });
+  } catch (e) {
+    const name = (e as Error).name;
+    if (name === "TimeoutError") throw new ServiceError(`${what} took too long to answer. Try again in a minute.`);
+    if (name === "AbortError") throw e;
+    throw new ServiceError(`Couldn't reach ${what.toLowerCase()}. Check your connection and try again.`);
+  }
+}
+
 /* ---------- Place search (Photon) ---------- */
 
 type PhotonFeature = {
@@ -33,7 +45,7 @@ function photonLabel(p: PhotonFeature["properties"]): string {
 
 export async function searchPlaces(query: string, near: LatLon = JAKARTA, signal?: AbortSignal): Promise<Place[]> {
   const q = new URLSearchParams({ q: query, limit: "6", lat: String(near.lat), lon: String(near.lon) });
-  const res = await fetch(`${PHOTON}/api/?${q}`, { signal });
+  const res = await fetchWithin(`${PHOTON}/api/?${q}`, { signal }, 10_000, "Place search");
   if (!res.ok) throw new ServiceError("Place search is unavailable right now. Pick the spot on the map instead.");
   const data = (await res.json()) as { features?: PhotonFeature[] };
   return (data.features ?? []).map((f) => ({
@@ -45,7 +57,7 @@ export async function searchPlaces(query: string, near: LatLon = JAKARTA, signal
 
 export async function placeName(p: LatLon): Promise<string> {
   try {
-    const res = await fetch(`${PHOTON}/reverse?lat=${p.lat}&lon=${p.lon}&limit=1`);
+    const res = await fetchWithin(`${PHOTON}/reverse?lat=${p.lat}&lon=${p.lon}&limit=1`, {}, 8_000, "Place search");
     const data = (await res.json()) as { features?: PhotonFeature[] };
     const f = data.features?.[0];
     return f ? photonLabel(f.properties) : "Pinned place";
@@ -81,23 +93,37 @@ function categoryOf(tags: Record<string, string>): Exclude<Category, "mine"> {
   return "restaurant";
 }
 
-export async function findSpots(categories: Category[], center: LatLon, radius: number): Promise<Spot[]> {
+export async function findSpots(
+  categories: Category[],
+  center: LatLon,
+  radius: number,
+  onRetry: (message: string) => void = () => {},
+): Promise<Spot[]> {
   const cats = categories.filter((c): c is Exclude<Category, "mine"> => c !== "mine");
   if (cats.length === 0) return [];
   const around = `(around:${Math.round(radius)},${center.lat.toFixed(5)},${center.lon.toFixed(5)})`;
   const parts = cats.flatMap((c) => CATEGORY_QUERY[c].map((f) => `nwr${f}["name"]${around};`));
-  const query = `[out:json][timeout:25];(${parts.join("")});out center tags 2500;`;
+  const query = `[out:json][timeout:20];(${parts.join("")});out center tags 2500;`;
 
   let lastStatus = 0;
-  for (const url of OVERPASS) {
+  for (const [n, url] of OVERPASS.entries()) {
+    if (n > 0) onRetry(`The spot search server is slow. Trying backup server ${n} of ${OVERPASS.length - 1}`);
     try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        body: `data=${encodeURIComponent(query)}`,
-      });
+      const res = await fetchWithin(
+        url,
+        {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded" },
+          body: `data=${encodeURIComponent(query)}`,
+        },
+        25_000,
+        "The spot search server",
+      );
       lastStatus = res.status;
-      if (!res.ok) continue;
+      if (!res.ok) {
+        console.warn("overpass", url, res.status);
+        continue;
+      }
       const data = (await res.json()) as { elements?: OverpassElement[] };
       const seen = new Set<string>();
       const spots: Spot[] = [];
@@ -119,7 +145,8 @@ export async function findSpots(categories: Category[], center: LatLon, radius: 
         });
       }
       return spots;
-    } catch {
+    } catch (e) {
+      console.warn("overpass failed", url, e);
       // try the next server
     }
   }
@@ -136,17 +163,22 @@ export const COSTING: Record<Mode, string> = { car: "auto", motorbike: "motorcyc
 
 async function valhalla<T>(path: string, body: object): Promise<T> {
   for (let attempt = 0; attempt < 3; attempt++) {
-    const res = await fetch(`${VALHALLA}/${path}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    // GET with ?json= is a "simple" request: no CORS preflight for the public server to handle
+    const res = await fetchWithin(
+      `${VALHALLA}/${path}?json=${encodeURIComponent(JSON.stringify(body))}`,
+      {},
+      30_000,
+      "The routing server",
+    );
     if (res.status === 429) {
       await sleep(2500 * (attempt + 1));
       continue;
     }
     const data = (await res.json().catch(() => ({}))) as T & { error?: string };
-    if (!res.ok) throw new ServiceError(data.error ? `Routing failed: ${data.error}` : "The routing server didn't answer. Try again.");
+    if (!res.ok) {
+      console.warn("valhalla", path, res.status, data);
+      throw new ServiceError(data.error ? `Routing failed: ${data.error}` : `The routing server returned an error (${res.status}). Try again.`);
+    }
     return data;
   }
   throw new ServiceError("The routing server is busy. Wait a minute and try again.");
