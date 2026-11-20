@@ -59,24 +59,3 @@ export function spreadSample<T extends LatLon>(items: T[], center: LatLon, radiu
     .sort((a, b) => distance(a, center) - distance(b, center))
     .slice(0, max);
 }
-
-/** Decodes a Valhalla polyline (precision 6) into [lon, lat] pairs for the map. */
-export function decodePolyline6(str: string): [number, number][] {
-  const coords: [number, number][] = [];
-  let index = 0, lat = 0, lon = 0;
-  while (index < str.length) {
-    for (const which of [0, 1]) {
-      let result = 0, shift = 0, byte: number;
-      do {
-        byte = str.charCodeAt(index++) - 63;
-        result |= (byte & 0x1f) << shift;
-        shift += 5;
-      } while (byte >= 0x20);
-      const delta = result & 1 ? ~(result >> 1) : result >> 1;
-      if (which === 0) lat += delta;
-      else lon += delta;
-    }
-    coords.push([lon / 1e6, lat / 1e6]);
-  }
-  return coords;
-}

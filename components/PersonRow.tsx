@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { placeName, searchPlaces } from "@/lib/apis";
+import { JAKARTA, searchPlaces, toPlace, type FoundPlace } from "@/lib/api";
 import { MODE_LABEL, type Mode, type Person, type Place } from "@/lib/types";
 
 const MODES: Mode[] = ["car", "motorbike", "walk"];
@@ -20,7 +20,7 @@ type Props = {
 export default function PersonRow({ person, color, isFirst, picking, canRemove, onChange, onPickOnMap, onRemove }: Props) {
   const [editing, setEditing] = useState(!person.place);
   const [query, setQuery] = useState("");
-  const [options, setOptions] = useState<Place[]>([]);
+  const [options, setOptions] = useState<FoundPlace[]>([]);
   const [status, setStatus] = useState("");
   const abort = useRef<AbortController | null>(null);
 
@@ -39,22 +39,26 @@ export default function PersonRow({ person, color, isFirst, picking, canRemove, 
       abort.current = new AbortController();
       try {
         setStatus("Searching");
-        const found = await searchPlaces(q, person.place ?? undefined, abort.current.signal);
+        const found = await searchPlaces(q, person.place ?? JAKARTA, abort.current.signal);
         setOptions(found);
-        setStatus(found.length ? "" : "No matches. Try a street or area name, or pick on the map.");
+        setStatus(found.length ? "" : "No matches. Try another name, or pick on the map.");
       } catch (e) {
         if ((e as Error).name !== "AbortError") setStatus((e as Error).message);
       }
-    }, 400);
+    }, 450);
     return () => clearTimeout(t);
   }, [query, person.place]);
 
-  function choose(place: Place) {
+  function setPlace(place: Place) {
     onChange({ ...person, place });
     setQuery("");
     setOptions([]);
     setStatus("");
     setEditing(false);
+  }
+
+  function choose(p: FoundPlace) {
+    setPlace(toPlace(p));
   }
 
   function useMyLocation() {
@@ -64,10 +68,7 @@ export default function PersonRow({ person, color, isFirst, picking, canRemove, 
     }
     setStatus("Getting your location");
     navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        const p = { lat: pos.coords.latitude, lon: pos.coords.longitude };
-        choose({ ...p, label: await placeName(p) });
-      },
+      (pos) => setPlace({ lat: pos.coords.latitude, lon: pos.coords.longitude, label: "My location" }),
       () => setStatus("Location wasn't shared. Search or pick on the map."),
       { enableHighAccuracy: true, timeout: 10_000 },
     );
@@ -140,7 +141,8 @@ export default function PersonRow({ person, color, isFirst, picking, canRemove, 
               {options.map((o, i) => (
                 <li key={`${o.lat},${o.lon},${i}`}>
                   <button type="button" onClick={() => choose(o)}>
-                    {o.label}
+                    <span className="opt-main">{o.main}</span>
+                    {o.secondary && <span className="opt-sub">{o.secondary}</span>}
                   </button>
                 </li>
               ))}

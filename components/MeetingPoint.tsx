@@ -1,20 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { placeName, route, sleep } from "@/lib/apis";
+import { routeLines } from "@/lib/api";
 import { evaluate, solve, type Solution } from "@/lib/solver";
 import { load, newGroup, newId, newPerson, save } from "@/lib/store";
 import {
   CATEGORY_LABEL,
   MODE_LABEL,
   PERSON_COLORS,
-  TRAFFIC_LABEL,
   type Category,
   type Group,
   type Objective,
   type Person,
   type Result,
-  type Traffic,
 } from "@/lib/types";
 import MapView, { type MapRoute } from "./MapView";
 import PersonRow from "./PersonRow";
@@ -23,7 +21,6 @@ type Saved = ReturnType<typeof load>;
 type Picking = { kind: "person"; id: string } | { kind: "spot" } | null;
 
 const CATEGORIES: Category[] = ["cafe", "mall", "restaurant", "coworking", "park", "mine"];
-const TRAFFIC: Traffic[] = ["light", "normal", "rush"];
 
 export function fmtMinutes(m: number): string {
   const r = Math.round(m);
@@ -98,6 +95,7 @@ function Planner({ saved, setSaved }: { saved: Saved; setSaved: (fn: (s: Saved) 
     group.people.map((p) => [p.place?.lat, p.place?.lon, p.mode]),
     group.categories,
     group.mySpots.map((s) => s.id),
+    group.leaveAt,
   ]);
   useEffect(() => {
     if (solution && solution.key !== inputsKey) {
@@ -107,10 +105,10 @@ function Planner({ saved, setSaved }: { saved: Saved; setSaved: (fn: (s: Saved) 
     }
   }, [inputsKey, solution]);
 
-  // Objective and traffic only re-rank: instant, no network
+  // Switching Fair / Fastest only re-ranks: instant, no new requests
   const results: Result[] = useMemo(
-    () => (solution ? evaluate(solution.scored, solution.people, group.objective, group.traffic).slice(0, 3) : []),
-    [solution, group.objective, group.traffic],
+    () => (solution ? evaluate(solution.scored, group.objective).slice(0, 3) : []),
+    [solution, group.objective],
   );
 
   const showRoutes = useCallback(
@@ -120,17 +118,22 @@ function Planner({ saved, setSaved }: { saved: Saved; setSaved: (fn: (s: Saved) 
       setRoutes([]);
       const target = list[i]?.spot;
       if (!target) return;
-      const drawn: MapRoute[] = [];
-      for (const person of sol.people) {
+      try {
+        // One request for everyone's route to this spot
+        const paths = await routeLines(
+          sol.people.map((p) => ({ from: p.place!, mode: p.mode })),
+          target,
+          sol.departure,
+        );
         if (token !== routeToken.current) return;
-        try {
-          const r = await route(person.place!, target, person.mode);
-          drawn.push({ color: colorOf(person.id), coords: r.coords });
-          if (token === routeToken.current) setRoutes([...drawn]);
-        } catch {
-          // skip this route; the times on the card still stand
-        }
-        await sleep(350);
+        setRoutes(
+          sol.people.flatMap((p, k) => {
+            const path = paths[k];
+            return path ? [{ color: colorOf(p.id), path }] : [];
+          }),
+        );
+      } catch {
+        // routes are a bonus; the trip times on the card still stand
       }
     },
     [colorOf],
@@ -167,16 +170,16 @@ function Planner({ saved, setSaved }: { saved: Saved; setSaved: (fn: (s: Saved) 
     const p = picking;
     setPicking(null);
     if (!p) return;
-    const label = await placeName({ lat, lon });
+    const label = "Pinned on map";
     if (p.kind === "person") {
       update((g) => ({ ...g, people: g.people.map((x) => (x.id === p.id ? { ...x, place: { lat, lon, label } } : x)) }));
     } else {
-      const name = window.prompt("Name this spot", label.split(",")[0]);
+      const name = window.prompt("Name this spot", "My spot");
       if (!name?.trim()) return;
       update((g) => ({
         ...g,
         categories: g.categories.includes("mine") ? g.categories : [...g.categories, "mine"],
-        mySpots: [...g.mySpots, { id: `mine/${newId()}`, name: name.trim(), lat, lon, category: "mine", area: label }],
+        mySpots: [...g.mySpots, { id: `mine/${newId()}`, name: name.trim(), lat, lon, category: "mine", area: "Your spot" }],
       }));
     }
   }
@@ -346,15 +349,34 @@ function Planner({ saved, setSaved }: { saved: Saved; setSaved: (fn: (s: Saved) 
             {group.objective === "fair" ? "Keeps the longest trip as short as possible." : "Keeps everyone's trips added together as short as possible."}
           </p>
 
-          <h2 id="h-traffic">Traffic</h2>
-          <div className="seg" role="radiogroup" aria-labelledby="h-traffic">
-            {TRAFFIC.map((t) => (
-              <button key={t} type="button" role="radio" aria-checked={group.traffic === t} onClick={() => update((g) => ({ ...g, traffic: t }))}>
-                {TRAFFIC_LABEL[t]}
-              </button>
-            ))}
+          <h2 id="h-leave">Leaving</h2>
+          <div className="seg" role="radiogroup" aria-labelledby="h-leave">
+            <button type="button" role="radio" aria-checked={!group.leaveAt} onClick={() => update((g) => ({ ...g, leaveAt: null }))}>
+              Now
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={!!group.leaveAt}
+              onClick={() => update((g) => ({ ...g, leaveAt: g.leaveAt ?? "18:00" }))}
+            >
+              At a time
+            </button>
           </div>
-          <p className="hint">A rough adjustment: cars slow down most, motorbikes less, walking not at all.</p>
+          {group.leaveAt && (
+            <input
+              className="time"
+              type="time"
+              value={group.leaveAt}
+              onChange={(e) => update((g) => ({ ...g, leaveAt: e.target.value || null }))}
+              aria-label="Leaving at"
+            />
+          )}
+          <p className="hint">
+            {group.leaveAt
+              ? "Uses TomTom's typical traffic for that time (today, or tomorrow if it has passed)."
+              : "Uses TomTom's live traffic for car and motorbike trips."}
+          </p>
         </section>
 
         <div className="find-row">
@@ -417,8 +439,8 @@ function Planner({ saved, setSaved }: { saved: Saved; setSaved: (fn: (s: Saved) 
         )}
 
         <footer className="foot">
-          Trip times come from OpenStreetMap routing without live traffic, adjusted by the traffic setting. Groups are saved
-          only in this browser.
+          Places, trip times and routes come from TomTom, with live or typical traffic. Motorbike routing is a TomTom beta.
+          Groups are saved only in this browser.
         </footer>
       </div>
 

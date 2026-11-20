@@ -17,7 +17,7 @@ export function newGroup(name: string): Group {
     people: [newPerson("Me"), newPerson("Friend 1")],
     categories: ["cafe"],
     objective: "fair",
-    traffic: "normal",
+    leaveAt: null,
     mySpots: [],
   };
 }
@@ -28,7 +28,11 @@ export function load(): Saved {
     const raw = localStorage.getItem(KEY);
     if (raw) {
       const s = JSON.parse(raw) as Saved;
-      if (s.groups?.length) return s;
+      if (s.groups?.length) {
+        // Groups saved by the first version had a traffic setting instead of a departure time
+        s.groups = s.groups.map((g) => ({ ...g, leaveAt: g.leaveAt ?? null }));
+        return s;
+      }
     }
   } catch {
     // fall through to a fresh start
