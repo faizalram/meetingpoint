@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import type { Map as MLMap, Marker as MLMarker, GeoJSONSource } from "maplibre-gl";
-import { JAKARTA } from "@/lib/apis";
+import { useEffect, useRef, useState } from "react";
+import type { Map as MLMap, Marker as MLMarker, GeoJSONSource, StyleSpecification } from "maplibre-gl";
+import { JAKARTA } from "@/lib/api";
 import type { Place, Result, Spot } from "@/lib/types";
 
 export type MapPerson = { id: string; name: string; color: string; place: Place | null };
-export type MapRoute = { color: string; coords: [number, number][] };
+export type MapRoute = { color: string; path: [number, number][] }; // [lat, lon]
 
 type Props = {
   people: MapPerson[];
@@ -20,8 +20,25 @@ type Props = {
   fitKey: string;
 };
 
-// Free vector tiles from OpenFreeMap: no key, no limits. Attribution is added by MapLibre.
-const STYLE = "https://tiles.openfreemap.org/styles/positron";
+/**
+ * TomTom raster tiles (50,000 free a day), drawn with MapLibre. Night style in dark mode.
+ * Tiles come through this app's /api/tile route, so the TomTom map key stays on the server.
+ */
+function tomtomStyle(dark: boolean): StyleSpecification {
+  return {
+    version: 8,
+    sources: {
+      tomtom: {
+        type: "raster",
+        tiles: [`${window.location.origin}/api/tile/${dark ? "night" : "main"}/{z}/{x}/{y}`],
+        tileSize: 256,
+        maxzoom: 22,
+        attribution: "© TomTom",
+      },
+    },
+    layers: [{ id: "tomtom", type: "raster", source: "tomtom" }],
+  };
+}
 
 function initials(name: string) {
   const parts = name.trim().split(/\s+/);
@@ -38,8 +55,8 @@ export default function MapView(props: Props) {
   const ready = useRef(false);
   const latest = useRef(props);
   latest.current = props;
+  const [problem, setProblem] = useState("");
 
-  // Create the map once
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -47,15 +64,21 @@ export default function MapView(props: Props) {
       if (cancelled || !box.current) return;
       lib.setWorkerUrl(new URL("/maplibre-gl-worker.mjs", window.location.href).href);
       libRef.current = lib;
+      const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
       const map = new lib.Map({
         container: box.current,
-        style: STYLE,
+        style: tomtomStyle(dark),
         center: [JAKARTA.lon, JAKARTA.lat],
         zoom: 10.3,
         attributionControl: { compact: true },
       });
       map.addControl(new lib.NavigationControl({ showCompass: false }), "top-right");
       map.on("click", (e) => latest.current.onPick?.(e.lngLat.lat, e.lngLat.lng));
+      map.on("error", (e) => {
+        const status = (e.error as { status?: number } | undefined)?.status;
+        if (status === 500) setProblem("The map needs TOMTOM_MAP_KEY in Vercel. Add it, then redeploy.");
+        else if (status === 403) setProblem("TomTom refused the map tiles: enable Map Display API on TOMTOM_MAP_KEY, or today's free tiles are used up.");
+      });
       map.on("load", () => {
         map.addSource("routes", { type: "geojson", data: empty });
         map.addLayer({
@@ -80,7 +103,7 @@ export default function MapView(props: Props) {
           paint: {
             "circle-radius": 3.5,
             "circle-color": "#7c8796",
-            "circle-opacity": 0.7,
+            "circle-opacity": 0.8,
             "circle-stroke-width": 1,
             "circle-stroke-color": "#ffffff",
           },
@@ -156,7 +179,7 @@ export default function MapView(props: Props) {
       features: p.routes.map((r) => ({
         type: "Feature",
         properties: { color: r.color },
-        geometry: { type: "LineString", coordinates: r.coords },
+        geometry: { type: "LineString", coordinates: r.path.map(([lat, lon]) => [lon, lat]) },
       })),
     });
   }
@@ -187,5 +210,10 @@ export default function MapView(props: Props) {
     mapRef.current?.getCanvas().style.setProperty("cursor", props.onPick ? "crosshair" : "");
   }, [props.onPick]);
 
-  return <div ref={box} className="map" role="region" aria-label="Map" />;
+  return (
+    <div className="map" role="region" aria-label="Map">
+      <div ref={box} className="map-canvas" />
+      {problem && <p className="map-error">{problem}</p>}
+    </div>
+  );
 }
