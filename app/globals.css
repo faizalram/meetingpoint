@@ -1,0 +1,699 @@
+/* MeetingPoint: a quiet panel next to the map. The one loud thing is road-sign yellow,
+   used only for meeting spots (diamond markers, rank signs) and the Find button. */
+
+:root {
+  --paper: #f3f5f7;
+  --surface: #ffffff;
+  --ink: #121a26;
+  --muted: #5b6676;
+  --line: #dde2e8;
+  --sign: #ffc400;
+  --sign-ink: #1c1500;
+  --focus: #2f6bff;
+  --danger: #c62828;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #0e131b;
+    --surface: #161d28;
+    --ink: #e8edf3;
+    --muted: #95a1b2;
+    --line: #2a3342;
+    --danger: #ff8a80;
+    --focus: #8ea8ff;
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+body {
+  font-family: var(--font-barlow), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 17px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Layout: map on top on phones, panel beside the map on wide screens */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+}
+
+.map-wrap {
+  order: -1;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  height: 42vh;
+  min-height: 260px;
+  background: var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.map {
+  width: 100%;
+  height: 100%;
+}
+
+.panel {
+  padding: 1rem 1.15rem calc(env(safe-area-inset-bottom, 0px) + 2rem);
+  max-width: 38rem;
+  width: 100%;
+  margin: 0 auto;
+}
+
+@media (min-width: 900px) {
+  .app {
+    display: grid;
+    grid-template-columns: 430px 1fr;
+    height: 100dvh;
+  }
+  .map-wrap {
+    order: 0;
+    position: relative;
+    height: 100dvh;
+    border-bottom: 0;
+  }
+  .panel {
+    overflow-y: auto;
+    border-right: 1px solid var(--line);
+    padding-top: 1.25rem;
+    max-width: none;
+  }
+}
+
+/* Header */
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+
+.wordmark {
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.group-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.group-bar select {
+  max-width: 11rem;
+  padding: 0.35rem 0.5rem;
+  border: 1.5px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  font-weight: 600;
+}
+
+/* Sections */
+
+.block {
+  padding: 1rem 0 0.25rem;
+  border-top: 1px solid var(--line);
+  margin-top: 0.75rem;
+}
+
+.block h2 {
+  margin: 0 0 0.6rem;
+  font-size: 1.0625rem;
+  font-weight: 700;
+}
+
+.block h2 + .seg + .hint + h2 {
+  margin-top: 1rem;
+}
+
+.hint {
+  margin: 0.45rem 0 0;
+  color: var(--muted);
+  font-size: 0.9375rem;
+}
+
+.error {
+  margin: 0.6rem 0 0;
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.progress {
+  margin: 0.6rem 0 0;
+  color: var(--muted);
+}
+
+/* People */
+
+.people {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.person {
+  padding: 0.65rem 0;
+}
+
+.person + .person {
+  border-top: 1px dashed var(--line);
+}
+
+.person-top {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.swatch {
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.person-name {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  font-weight: 700;
+  font-size: 1.0625rem;
+  padding: 0.2rem 0;
+  border-bottom: 1.5px solid transparent;
+}
+
+.person-name:focus {
+  outline: none;
+  border-bottom-color: var(--ink);
+}
+
+.modes {
+  display: flex;
+  border: 1.5px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.mode {
+  border: none;
+  background: transparent;
+  padding: 0.3rem 0.55rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.mode + .mode {
+  border-left: 1.5px solid var(--line);
+}
+
+.mode[aria-checked="true"] {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.icon-btn {
+  width: 2rem;
+  height: 2rem;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 1.3rem;
+  line-height: 1;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.place {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  margin-top: 0.4rem;
+  padding: 0.5rem 0.65rem;
+  border: 1.5px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  text-align: left;
+}
+
+.place-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.place-edit {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.9375rem;
+  flex-shrink: 0;
+}
+
+.place-search {
+  margin-top: 0.4rem;
+}
+
+.search {
+  width: 100%;
+  padding: 0.6rem 0.7rem;
+  border: 1.5px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 1rem;
+}
+
+.search:focus {
+  outline: none;
+  border-color: var(--ink);
+}
+
+.place-actions {
+  display: flex;
+  gap: 1rem;
+  margin-top: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.options {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  border: 1.5px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.options li + li {
+  border-top: 1px solid var(--line);
+}
+
+.options button {
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 0.55rem 0.7rem;
+}
+
+.options button:hover {
+  background: var(--paper);
+}
+
+.link-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  font-weight: 600;
+  font-size: 0.9375rem;
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1.5px;
+}
+
+.link-btn.is-active {
+  text-decoration-color: var(--sign);
+  text-decoration-thickness: 3px;
+}
+
+.add-btn {
+  margin-top: 0.5rem;
+  border: 1.5px dashed var(--line);
+  background: transparent;
+  border-radius: 8px;
+  padding: 0.55rem 0.9rem;
+  font-weight: 600;
+  width: 100%;
+}
+
+/* Chips and segmented controls */
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.chip {
+  border: 1.5px solid var(--line);
+  background: transparent;
+  border-radius: 999px;
+  padding: 0.35rem 0.85rem;
+  font-weight: 600;
+  font-size: 0.9375rem;
+}
+
+.chip[aria-pressed="true"] {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
+}
+
+.my-spots ul {
+  list-style: none;
+  margin: 0.5rem 0;
+  padding: 0;
+}
+
+.my-spots li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.15rem 0;
+}
+
+.seg {
+  display: flex;
+  border: 1.5px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.seg button {
+  flex: 1;
+  border: none;
+  background: transparent;
+  padding: 0.5rem 0.4rem;
+  font-weight: 600;
+  font-size: 0.9375rem;
+  color: var(--muted);
+}
+
+.seg button + button {
+  border-left: 1.5px solid var(--line);
+}
+
+.seg button[aria-checked="true"] {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+/* Find */
+
+.find-row {
+  border-top: 1px solid var(--line);
+  margin-top: 1rem;
+  padding-top: 1rem;
+}
+
+.find {
+  width: 100%;
+  min-height: 3.25rem;
+  border: 2px solid var(--sign-ink);
+  border-radius: 10px;
+  background: var(--sign);
+  color: var(--sign-ink);
+  font-weight: 700;
+  font-size: 1.125rem;
+}
+
+.find:disabled {
+  background: var(--line);
+  border-color: var(--line);
+  color: var(--muted);
+  cursor: default;
+}
+
+/* Results */
+
+.results {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+}
+
+.result {
+  padding: 0.85rem 0.85rem 0.9rem;
+  border: 1.5px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.result + .result {
+  margin-top: 0.6rem;
+}
+
+.result.is-selected {
+  border-color: var(--ink);
+  box-shadow: inset 4px 0 0 var(--sign);
+}
+
+.result-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  border: none;
+  background: none;
+  padding: 0;
+  text-align: left;
+}
+
+/* Small road-sign diamond, same as the map marker */
+.rank {
+  flex-shrink: 0;
+  width: 1.65rem;
+  height: 1.65rem;
+  margin: 0.2rem;
+  display: grid;
+  place-items: center;
+  background: var(--sign);
+  color: var(--sign-ink);
+  border: 2px solid var(--sign-ink);
+  border-radius: 3px;
+  transform: rotate(45deg);
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.rank span {
+  transform: rotate(-45deg);
+}
+
+.result-title {
+  display: grid;
+  min-width: 0;
+}
+
+.result-name {
+  font-weight: 700;
+  font-size: 1.125rem;
+  line-height: 1.2;
+}
+
+.result-sub {
+  color: var(--muted);
+  font-size: 0.9375rem;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+/* Leave room for the sticky map when scrolling results into view on phones */
+.results-block {
+  scroll-margin-top: calc(42vh + 0.5rem);
+}
+
+@media (min-width: 900px) {
+  .results-block {
+    scroll-margin-top: 0.5rem;
+  }
+}
+
+.result-summary {
+  margin: 0.55rem 0 0.5rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.bars {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.bars li {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr 4.6rem;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.9375rem;
+}
+
+.bar-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-track {
+  height: 0.6rem;
+  background: var(--paper);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.bar {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+}
+
+.bar-mins {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.bars li.is-longest .bar-mins {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.result-actions {
+  display: flex;
+  gap: 1.25rem;
+  margin-top: 0.75rem;
+}
+
+.foot {
+  margin-top: 2rem;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+/* Map overlays and markers */
+
+.pick-banner {
+  position: absolute;
+  top: 0.75rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.55rem 0.9rem;
+  background: var(--ink);
+  color: var(--paper);
+  border-radius: 10px;
+  font-weight: 600;
+  max-width: calc(100% - 1.5rem);
+}
+
+.pick-banner .link-btn {
+  color: var(--paper);
+}
+
+.mk-person {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2.5px solid #ffffff;
+  color: #ffffff;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-barlow), system-ui, sans-serif;
+  font-weight: 700;
+  font-size: 12px;
+  box-shadow: 0 1px 4px rgba(18, 26, 38, 0.35);
+}
+
+.mk-spot {
+  border: none;
+  background: none;
+  padding: 0;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+}
+
+.mk-sign {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  background: #ffc400;
+  border: 2.5px solid #1c1500;
+  border-radius: 3px;
+  transform: rotate(45deg);
+  box-shadow: 0 1px 4px rgba(18, 26, 38, 0.35);
+}
+
+.mk-sign span {
+  transform: rotate(-45deg);
+  color: #1c1500;
+  font-family: var(--font-barlow), system-ui, sans-serif;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.mk-spot.is-selected .mk-sign {
+  width: 32px;
+  height: 32px;
+  border-width: 3px;
+}
+
+.mk-spot.is-selected .mk-sign span {
+  font-size: 16px;
+}
+
+.mk-own {
+  width: 13px;
+  height: 13px;
+  background: var(--surface);
+  border: 2.5px solid #121a26;
+  border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    scroll-behavior: auto !important;
+  }
+}
